@@ -1,0 +1,51 @@
+const statusMap = {
+  Active: "success",
+  active: "success",
+  Published: "success",
+  Resolved: "success",
+  resolved: "success",
+  Approved: "success",
+  approved: "success",
+  AUTO_PUBLISH: "success",
+  ADMIN: "info",
+  MODERATOR: "warning",
+  USER: "secondary",
+  ACTIVE: "success",
+  READY: "success",
+  UP: "success",
+  PENDING: "warning",
+  SUSPENDED: "danger",
+  Pending: "warning",
+  pending: "warning",
+  "In Review": "warning",
+  Review: "warning",
+  Draft: "secondary",
+  DRAFT: "secondary",
+  Queued: "secondary",
+  STARTED: "info",
+  GRAPH_PREPARING: "warning",
+  "Needs Revision": "info",
+  Escalated: "info",
+  Public: "info",
+  Internal: "secondary",
+  Blocked: "danger",
+  blocked: "danger",
+  Archived: "secondary",
+  ARCHIVED: "secondary",
+  READY_TO_PUBLISH: "info",
+  Rejected: "danger",
+  rejected: "danger",
+  REJECTED: "danger",
+  PENDING_REVIEW: "warning",
+  Yes: "success",
+  No: "secondary",
+  true: "success",
+  false: "secondary",
+};
+
+function StatusBadge({ value }) {
+  const variant = statusMap[value] || "secondary";
+  return <span className={`status-pill status-pill--${variant}`}>{value}</span>;
+}
+
+export default StatusBadge;
