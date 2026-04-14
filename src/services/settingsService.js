@@ -6,13 +6,13 @@ export const defaultSettings = {
   refreshToken: "",
   currentUser: null,
   services: {
-    auth: "https://abc123.ngrok-free.app/api",
-    city: "https://abc123.ngrok-free.app/api/cities",
-    poi: "https://abc123.ngrok-free.app/api/poi",
-    review: "https://abc123.ngrok-free.app/api/reviews",
-    route: "https://abc123.ngrok-free.app/api/routes",
-    graphImport: "https://abc123.ngrok-free.app",
-    ml: "https://abc123.ngrok-free.app",
+    auth: "https://turban-financial-penholder.ngrok-free.dev/api",
+    city: "https://turban-financial-penholder.ngrok-free.dev/api/cities",
+    poi: "https://turban-financial-penholder.ngrok-free.dev/api/poi",
+    review: "https://turban-financial-penholder.ngrok-free.dev/api/reviews",
+    route: "https://turban-financial-penholder.ngrok-free.dev/api/routes",
+    graphImport: "https://turban-financial-penholder.ngrok-free.dev",
+    ml: "https://turban-financial-penholder.ngrok-free.dev",
   },
 };
 
