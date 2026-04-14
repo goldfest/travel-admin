@@ -6,13 +6,13 @@ export const defaultSettings = {
   refreshToken: "",
   currentUser: null,
   services: {
-    auth: "http://localhost:8084/api",
-    city: "http://localhost:8082/api/cities",
-    poi: "http://localhost:8081/api/poi",
-    review: "http://localhost:8083/api/reviews",
-    route: "http://localhost:8087/api/routes",
-    graphImport: "http://localhost:8088",
-    ml: "http://localhost:8000",
+    auth: "https://abc123.ngrok-free.app/api",
+    city: "https://abc123.ngrok-free.app/api/cities",
+    poi: "https://abc123.ngrok-free.app/api/poi",
+    review: "https://abc123.ngrok-free.app/api/reviews",
+    route: "https://abc123.ngrok-free.app/api/routes",
+    graphImport: "https://abc123.ngrok-free.app",
+    ml: "https://abc123.ngrok-free.app",
   },
 };
 
