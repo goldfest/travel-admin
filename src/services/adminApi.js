@@ -1,4 +1,4 @@
-import { parseSpringPage, requestJson } from "./apiClient";
+import { buildAbsoluteUrl, parseSpringPage, requestJson } from "./apiClient";
 import { getAppSettings } from "./settingsService";
 
 function getBaseUrl(key) {
@@ -158,7 +158,7 @@ export function startImportTask(payload) {
 export async function listReports({ page = 0, size = 50, status } = {}) {
   const path = status ? `/v1/reports/status/${status}` : "/v1/reports";
   const payload = await requestJson(getBaseUrl("review"), path, {
-    query: { page, size },
+    query: { page, size, sort: "createdAt,desc" },
   });
 
   return parseSpringPage(payload);
@@ -289,4 +289,73 @@ export function getGraphImportStats(cityId) {
   return requestJson(getBaseUrl("graphImport"), `/internal/graph-import/cities/${cityId}/stats`, {
     auth: false,
   });
+}
+
+export function getPoi(id) {
+  return requestJson(getBaseUrl("poi"), `/pois/${id}`);
+}
+
+export function getApprovedPoiMedia(poiId) {
+  return requestJson(getBaseUrl("poi"), `/pois/${poiId}/media`);
+}
+
+export async function listPendingPoiMedia({ page = 0, size = 50 } = {}) {
+  const payload = await requestJson(getBaseUrl("poi"), "/pois/media/pending", {
+    query: { page, size },
+  });
+  return parseSpringPage(payload);
+}
+
+export function uploadAdminPoiMedia(poiId, files) {
+  const formData = new FormData();
+  Array.from(files || []).forEach((file) => formData.append("files", file));
+
+  return requestJson(getBaseUrl("poi"), `/pois/${poiId}/media/admin`, {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export function approvePoiMedia(poiId, mediaId) {
+  return requestJson(getBaseUrl("poi"), `/pois/${poiId}/media/${mediaId}/approve`, { method: "POST" });
+}
+
+export function rejectPoiMedia(poiId, mediaId, reason = "") {
+  return requestJson(getBaseUrl("poi"), `/pois/${poiId}/media/${mediaId}/reject`, {
+    method: "POST",
+    body: reason ? { reason } : {},
+  });
+}
+
+export function deletePoiMedia(poiId, mediaId) {
+  return requestJson(getBaseUrl("poi"), `/pois/${poiId}/media/${mediaId}`, { method: "DELETE" });
+}
+
+export async function listPendingReviews({ page = 0, size = 50 } = {}) {
+  const payload = await requestJson(getBaseUrl("review"), "/v1/reviews/moderation/pending", {
+    query: { page, size, sort: "createdAt,desc" },
+  });
+  return parseSpringPage(payload);
+}
+
+export function approveReview(id, moderationComment = "") {
+  return requestJson(getBaseUrl("review"), `/v1/reviews/${id}/approve`, {
+    method: "POST",
+    query: moderationComment ? { moderationComment } : {},
+  });
+}
+
+export function rejectReview(id, moderationComment = "") {
+  return requestJson(getBaseUrl("review"), `/v1/reviews/${id}/reject`, {
+    method: "POST",
+    query: moderationComment ? { moderationComment } : {},
+  });
+}
+
+export function getReviewMediaUrl(path) {
+  return buildAbsoluteUrl(getBaseUrl("review"), path);
+}
+
+export function getPoiMediaUrl(path) {
+  return buildAbsoluteUrl(getBaseUrl("poi"), path);
 }

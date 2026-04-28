@@ -130,3 +130,20 @@ export function formatDateTime(value) {
     minute: "2-digit",
   }).format(date);
 }
+
+export function buildAbsoluteUrl(baseUrl, path) {
+  if (!path) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  try {
+    const origin = new URL(baseUrl).origin;
+    return `${origin}${path.startsWith("/") ? path : `/${path}`}`;
+  } catch {
+    return path;
+  }
+}
