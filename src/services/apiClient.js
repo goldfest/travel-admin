@@ -72,7 +72,13 @@ export async function requestJson(baseUrl, path = "", options = {}) {
   const url = `${trimSlashes(baseUrl)}${path}${queryString}`;
   const headers = new Headers(options.headers || {});
 
-  if (!headers.has("Content-Type") && options.body !== undefined && !(options.body instanceof FormData)) {
+  headers.set("ngrok-skip-browser-warning", "true");
+
+  if (
+    !headers.has("Content-Type") &&
+    options.body !== undefined &&
+    !(options.body instanceof FormData)
+  ) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -92,7 +98,11 @@ export async function requestJson(baseUrl, path = "", options = {}) {
   const payload = await parseBody(response);
 
   if (!response.ok) {
-    throw new ApiError(deriveMessage(payload, `HTTP ${response.status}`), response.status, payload);
+    throw new ApiError(
+      deriveMessage(payload, `HTTP ${response.status}`),
+      response.status,
+      payload,
+    );
   }
 
   return payload;

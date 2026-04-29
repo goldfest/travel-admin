@@ -1,30 +1,96 @@
 const SETTINGS_KEY = "travel-admin-settings";
 
+const DEFAULT_BACKEND_PREFIX = "/api";
+
 export const defaultSettings = {
   mode: "api",
   token: "",
   refreshToken: "",
   currentUser: null,
   services: {
-    auth: "http://localhost:8084/api",
-    city: "http://localhost:8082/api/cities",
-    poi: "http://localhost:8081/api/poi",
-    review: "http://localhost:8083/api/reviews",
-    route: "http://localhost:8085/api/routes",
-    graphImport: "http://localhost:8086",
-    ml: "http://localhost:8000",
+    auth: DEFAULT_BACKEND_PREFIX,
+    city: `${DEFAULT_BACKEND_PREFIX}/cities`,
+    poi: `${DEFAULT_BACKEND_PREFIX}/poi`,
+    review: `${DEFAULT_BACKEND_PREFIX}/reviews`,
+    route: `${DEFAULT_BACKEND_PREFIX}/routes`,
+    graphImport: "",
+    ml: "",
   },
 };
+
+function trimTrailingSlash(value = "") {
+  return value.replace(/\/+$/, "");
+}
+
+function normalizePath(pathname = "") {
+  if (!pathname || pathname === "/") {
+    return "";
+  }
+
+  return trimTrailingSlash(pathname.startsWith("/") ? pathname : `/${pathname}`);
+}
+
+function normalizeServiceUrl(key, value) {
+  const fallback = defaultSettings.services[key] || "";
+
+  if (typeof value !== "string" || !value.trim()) {
+    return fallback;
+  }
+
+  const rawValue = value.trim();
+
+  try {
+    const parsed = new URL(rawValue);
+    const pathname = normalizePath(parsed.pathname);
+
+    if (key === "auth") {
+      return pathname.startsWith(DEFAULT_BACKEND_PREFIX)
+        ? pathname
+        : DEFAULT_BACKEND_PREFIX;
+    }
+
+    if ((key === "graphImport" || key === "ml") && !pathname) {
+      return "";
+    }
+
+    return pathname || fallback;
+  } catch {
+    const path = normalizePath(rawValue);
+
+    if (key === "auth") {
+      if (!path || path === "/auth") {
+        return DEFAULT_BACKEND_PREFIX;
+      }
+
+      return path.startsWith(DEFAULT_BACKEND_PREFIX)
+        ? path
+        : DEFAULT_BACKEND_PREFIX;
+    }
+
+    return path || fallback;
+  }
+}
+
+function normalizeServices(rawServices = {}) {
+  const mergedServices = {
+    ...defaultSettings.services,
+    ...(rawServices || {}),
+  };
+
+  return Object.fromEntries(
+    Object.entries(mergedServices).map(([key, value]) => [
+      key,
+      normalizeServiceUrl(key, value),
+    ]),
+  );
+}
 
 function mergeSettings(rawSettings = {}) {
   return {
     ...defaultSettings,
     ...rawSettings,
     mode: "api",
-    services: {
-      ...defaultSettings.services,
-      ...(rawSettings.services || {}),
-    },
+    services: normalizeServices(rawSettings.services),
   };
 }
 
@@ -40,7 +106,9 @@ export function getAppSettings() {
   }
 
   try {
-    return mergeSettings(JSON.parse(rawValue));
+    const normalized = mergeSettings(JSON.parse(rawValue));
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalized));
+    return normalized;
   } catch {
     return defaultSettings;
   }
