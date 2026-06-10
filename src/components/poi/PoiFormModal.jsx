@@ -80,6 +80,18 @@ function stringifyFeatureValue(value) {
   return String(value);
 }
 
+function parseFeatureInputValue(value) {
+  const raw = String(value ?? "").trim();
+  const normalized = raw.toLowerCase();
+
+  if (normalized === "true" || normalized === "да") return true;
+  if (normalized === "false" || normalized === "нет") return false;
+  if (normalized === "null") return null;
+  if (raw !== "" && /^-?\d+(?:[.,]\d+)?$/.test(raw)) return Number(raw.replace(",", "."));
+
+  return raw;
+}
+
 function isBooleanLike(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
   return normalized === "true" || normalized === "false" || normalized === "да" || normalized === "нет";
@@ -100,13 +112,70 @@ function getRawFeatureLeaf(rawKey) {
   return parts.length ? parts[parts.length - 1] : key;
 }
 
-function makeRecognizedFeature(presetKey, value, originalKey) {
+function makeRecognizedFeature(presetKey, value, originalKey, originalValue = "", derivedFromKey = false) {
   return {
     key: presetKey,
     presetKey,
     value: stringifyFeatureValue(value),
     originalKey: originalKey || "",
+    originalValue: stringifyFeatureValue(originalValue),
+    originalRawValue: originalValue,
+    derivedFromKey,
+    dirty: false,
   };
+}
+
+function buildOriginalKeyWithLeaf(originalKey, nextLeaf) {
+  const key = String(originalKey || "").trim();
+  const leaf = getRawFeatureLeaf(key);
+  const cleanedLeaf = cleanupRawFeaturePart(leaf);
+  const cleanedNextLeaf = cleanupRawFeaturePart(nextLeaf);
+
+  if (!key || !cleanedNextLeaf) return key;
+  if (!cleanedLeaf || !key.endsWith(cleanedLeaf)) return cleanedNextLeaf;
+
+  return `${key.slice(0, key.length - cleanedLeaf.length)}${cleanedNextLeaf}`;
+}
+
+function rebuildOriginalFeatureKey(row) {
+  const value = cleanupRawFeaturePart(row.value);
+  if (!row.originalKey || !value) return row.originalKey || row.key;
+
+  switch (row.presetKey) {
+    case "avg_bill":
+      return buildOriginalKeyWithLeaf(row.originalKey, `Чек ${value}`);
+    case "lunch_price":
+      return buildOriginalKeyWithLeaf(row.originalKey, `Ланч ${value}`);
+    case "lunch_hours":
+      return buildOriginalKeyWithLeaf(row.originalKey, `Ланч ${value}`);
+    case "cuisine":
+    case "seats":
+      return buildOriginalKeyWithLeaf(row.originalKey, value);
+    default:
+      return row.originalKey;
+  }
+}
+
+function readOriginalFeatureValue(row) {
+  if (Object.prototype.hasOwnProperty.call(row, "originalRawValue")) {
+    return row.originalRawValue;
+  }
+  return parseFeatureInputValue(row.originalValue || "true");
+}
+
+function readEditedFeatureEntry(row) {
+  const rowValue = String(row.value ?? "").trim();
+
+  if (row.originalKey) {
+    if (row.derivedFromKey && isBooleanLike(row.originalValue)) {
+      return [rebuildOriginalFeatureKey(row), readOriginalFeatureValue(row)];
+    }
+
+    return [String(row.originalKey).trim(), rowValue ? parseFeatureInputValue(rowValue) : readOriginalFeatureValue(row)];
+  }
+
+  const key = String(row.key || "").trim();
+  return [key, rowValue ? parseFeatureInputValue(rowValue) : true];
 }
 
 function parseTwoGisFeature(key, value) {
@@ -121,85 +190,89 @@ function parseTwoGisFeature(key, value) {
 
   const checkMatch = normalizedLeaf.match(/(?:средний\s+)?ч[её]к\s*(.*)$/i);
   if (checkMatch) {
-    return makeRecognizedFeature("avg_bill", cleanupRawFeaturePart(checkMatch[1]) || stringValue, originalKey);
+    return makeRecognizedFeature("avg_bill", cleanupRawFeaturePart(checkMatch[1]) || stringValue, originalKey, stringValue, true);
   }
 
   const lunchPriceMatch = normalizedLeaf.match(/ланч\s*(от\s*)?(.+?₽|.+?руб\.?|\d+.*)$/i);
   if (lunchPriceMatch && /\d/.test(lunchPriceMatch[0]) && !/\d{1,2}:\d{2}/.test(lunchPriceMatch[0])) {
-    return makeRecognizedFeature("lunch_price", cleanupRawFeaturePart(lunchPriceMatch[0].replace(/^ланч/i, "")) || leaf, originalKey);
+    return makeRecognizedFeature("lunch_price", cleanupRawFeaturePart(lunchPriceMatch[0].replace(/^ланч/i, "")) || leaf, originalKey, stringValue, true);
   }
 
   const lunchHoursMatch = normalizedLeaf.match(/ланч\s*([0-2]?\d:[0-5]\d\s*[-–—]\s*[0-2]?\d:[0-5]\d)/i);
   if (lunchHoursMatch) {
-    return makeRecognizedFeature("lunch_hours", cleanupRawFeaturePart(lunchHoursMatch[1]), originalKey);
+    return makeRecognizedFeature("lunch_hours", cleanupRawFeaturePart(lunchHoursMatch[1]), originalKey, stringValue, true);
   }
 
   if (/бизнес[-\s]?ланч/i.test(leaf)) {
-    return makeRecognizedFeature("business_lunch", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("business_lunch", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/(?:до|от)?\s*\d+\s*(?:мест|посадочн)/i.test(leaf) || /количество\s+мест/i.test(leaf)) {
-    return makeRecognizedFeature("seats", leaf, originalKey);
+    return makeRecognizedFeature("seats", leaf, originalKey, stringValue, true);
   }
 
   if (/кухн/i.test(leaf) && !["кухня", "кухни", "тип кухни", "вид кухни"].includes(normalizedLeaf)) {
-    return makeRecognizedFeature("cuisine", leaf, originalKey);
+    return makeRecognizedFeature("cuisine", leaf, originalKey, stringValue, true);
   }
 
   if (/кофе\s+с\s+собой/i.test(leaf)) {
-    return makeRecognizedFeature("coffee_to_go", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("coffee_to_go", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/чай\s+с\s+собой/i.test(leaf)) {
-    return makeRecognizedFeature("tea_to_go", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("tea_to_go", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/наличн|карт[ао]й|безнал|сбп|qr/i.test(leaf) || /способы\s+оплаты/i.test(normalizeFeatureKey(originalKey))) {
-    return makeRecognizedFeature("payment_methods", leaf, originalKey);
+    return makeRecognizedFeature("payment_methods", leaf, originalKey, stringValue, true);
   }
 
   if (/доставка/i.test(leaf)) {
-    return makeRecognizedFeature("delivery", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("delivery", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/навынос|с\s+собой/i.test(leaf)) {
-    return makeRecognizedFeature("takeaway", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("takeaway", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/wi[-\s]?fi|вай[-\s]?фай/i.test(leaf)) {
-    return makeRecognizedFeature("wifi", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("wifi", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/парковк|стоянк/i.test(leaf)) {
-    return makeRecognizedFeature("parking", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("parking", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/летн.*веранд|террас/i.test(leaf)) {
-    return makeRecognizedFeature("veranda", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("veranda", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/завтрак/i.test(leaf)) {
-    return makeRecognizedFeature("breakfast", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("breakfast", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/с\s+животн|с\s+собак|pet/i.test(leaf)) {
-    return makeRecognizedFeature("pet_friendly", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("pet_friendly", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   if (/доступн.*сред|пандус|инвалид|wheelchair/i.test(leaf)) {
-    return makeRecognizedFeature("wheelchair_accessible", valueIsBoolean ? "true" : stringValue, originalKey);
+    return makeRecognizedFeature("wheelchair_accessible", valueIsBoolean ? "true" : stringValue, originalKey, stringValue, false);
   }
 
   const preset = detectFeaturePreset(leaf) || detectFeaturePreset(originalKey);
   if (preset) {
-    return makeRecognizedFeature(preset.key, valueIsBoolean ? stringValue : stringValue || leaf, originalKey);
+    return makeRecognizedFeature(preset.key, valueIsBoolean ? stringValue : stringValue || leaf, originalKey, stringValue, false);
   }
 
   return {
     key: cleanupRawFeaturePart(leaf || originalKey),
     presetKey: CUSTOM_FEATURE_VALUE,
     value: stringValue,
-    originalKey: originalKey === leaf ? "" : originalKey,
+    originalKey,
+    originalValue: stringValue,
+    originalRawValue: value,
+    derivedFromKey: false,
+    dirty: false,
   };
 }
 
@@ -251,7 +324,7 @@ function normalizeFeatures(features) {
     .map(([key, value]) => parseTwoGisFeature(key, value))
     .filter(Boolean);
 
-  return entries.length > 0 ? entries : [{ key: "", presetKey: CUSTOM_FEATURE_VALUE, value: "", originalKey: "" }];
+  return entries.length > 0 ? entries : [{ key: "", presetKey: CUSTOM_FEATURE_VALUE, value: "", originalKey: "", originalValue: "", originalRawValue: undefined, derivedFromKey: false, dirty: false }];
 }
 
 function normalizeSources(sources) {
@@ -322,14 +395,16 @@ function buildFormState(initialRecord, initialCityId, poiTypes) {
 
 function readFeatures(featureRows) {
   return featureRows.reduce((accumulator, row) => {
-    const key = String(row.key || "").trim();
-    const value = String(row.value ?? "").trim();
+    const [key, value] = row.originalKey && !row.dirty
+      ? [String(row.originalKey).trim(), readOriginalFeatureValue(row)]
+      : readEditedFeatureEntry(row);
+
     if (!key) return accumulator;
 
-    if (accumulator[key] && value && accumulator[key] !== value) {
-      accumulator[key] = `${accumulator[key]}, ${value}`;
+    if (Object.prototype.hasOwnProperty.call(accumulator, key) && value !== undefined && accumulator[key] !== value) {
+      accumulator[key] = `${stringifyFeatureValue(accumulator[key])}, ${stringifyFeatureValue(value)}`;
     } else {
-      accumulator[key] = value || "true";
+      accumulator[key] = value === undefined || value === "" ? true : value;
     }
 
     return accumulator;
@@ -397,8 +472,8 @@ function PoiFormModal({
     setFormState((current) => ({ ...current, [key]: value }));
   };
 
-  const updateFeatureRow = (index, patch) => {
-    setFeatureRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+  const updateFeatureRow = (index, patch, markDirty = true) => {
+    setFeatureRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch, dirty: markDirty ? true : row.dirty } : row)));
   };
 
   const updateHourRow = (index, patch) => {
@@ -522,7 +597,7 @@ function PoiFormModal({
                   <div className="section-title">Features</div>
                   <div className="text-secondary small">Параметры объекта без ручного JSON: Wi‑Fi, кухня, средний чек, парковка и другие признаки.</div>
                 </div>
-                <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => setFeatureRows((current) => [...current, { key: "", presetKey: CUSTOM_FEATURE_VALUE, value: "", originalKey: "" }])}>
+                <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => setFeatureRows((current) => [...current, { key: "", presetKey: CUSTOM_FEATURE_VALUE, value: "", originalKey: "", originalValue: "", originalRawValue: undefined, derivedFromKey: false, dirty: true }])}>
                   <i className="bi bi-plus-lg me-1" />Добавить
                 </button>
               </div>
@@ -540,18 +615,20 @@ function PoiFormModal({
                           onChange={(event) => {
                             const presetKey = event.target.value;
                             if (presetKey === CUSTOM_FEATURE_VALUE) {
-                              updateFeatureRow(index, { presetKey: CUSTOM_FEATURE_VALUE, key: row.presetKey && row.key === row.presetKey ? "" : row.key, originalKey: "" });
+                              updateFeatureRow(index, { presetKey: CUSTOM_FEATURE_VALUE, key: row.presetKey && row.key === row.presetKey ? "" : row.key, originalKey: "", originalValue: "", derivedFromKey: false });
                               return;
                             }
 
-                            updateFeatureRow(index, { presetKey, key: presetKey, originalKey: "" });
+                            updateFeatureRow(index, { presetKey, key: presetKey, originalKey: "", originalValue: "", derivedFromKey: false });
                           }}
                         >
                           <option value={CUSTOM_FEATURE_VALUE}>Свой ключ</option>
                           {FEATURE_PRESETS.map((preset) => <option key={preset.key} value={preset.key}>{preset.label}</option>)}
                         </select>
                         {row.originalKey && row.originalKey !== row.key && (
-                          <div className="form-text">Из 2GIS: {row.originalKey}</div>
+                          <div className="form-text">
+                            Из 2GIS: {row.originalKey}{row.dirty ? " • будет сохранено в исходном формате" : " • без изменений сохранится как есть"}
+                          </div>
                         )}
                       </div>
                       <div className="col-md-4">
@@ -560,7 +637,7 @@ function PoiFormModal({
                           placeholder="Ключ: Wi-Fi, средний чек, кухня..."
                           value={isCustomFeature ? row.key : selectedPreset?.label || row.key}
                           disabled={!isCustomFeature}
-                          onChange={(event) => updateFeatureRow(index, { key: event.target.value, presetKey: CUSTOM_FEATURE_VALUE, originalKey: "" })}
+                          onChange={(event) => updateFeatureRow(index, { key: event.target.value, presetKey: CUSTOM_FEATURE_VALUE, originalKey: "", originalValue: "", derivedFromKey: false })}
                         />
                       </div>
                       <div className="col-md-4">
