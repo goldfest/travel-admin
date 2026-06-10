@@ -3,6 +3,7 @@ import StatCard from "../components/ui/StatCard";
 import SectionCard from "../components/ui/SectionCard";
 import EntityTable from "../components/ui/EntityTable";
 import EntityModal from "../components/ui/EntityModal";
+import PaginationControls from "../components/ui/PaginationControls";
 import { useLocalCrud } from "../hooks/useLocalCrud";
 import { useAppSettings } from "../services/AppSettingsContext";
 
@@ -16,6 +17,8 @@ function EntityPage({ config }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [pageInfo, setPageInfo] = useState({ page: 0, size: 20, totalPages: 1, totalElements: 0 });
+  const [extraFilters, setExtraFilters] = useState({ popular: "all" });
 
   const isApiMode = settings.mode === "api" && Boolean(config.live);
 
@@ -28,15 +31,23 @@ function EntityPage({ config }) {
     setError("");
 
     try {
-      const records = await config.live.fetchList();
-      setApiRecords(records);
+      const result = await config.live.fetchList({ page: pageInfo.page, size: pageInfo.size });
+      const records = Array.isArray(result) ? result : result.items;
+      setApiRecords(records || []);
+      if (!Array.isArray(result)) {
+        setPageInfo((current) => ({
+          ...current,
+          totalPages: result.totalPages || 1,
+          totalElements: result.totalElements ?? records.length,
+        }));
+      }
       setNotice(config.live.notice || "");
     } catch (requestError) {
       setError(requestError.message || "Не удалось загрузить данные.");
     } finally {
       setLoading(false);
     }
-  }, [config.live]);
+  }, [config.live, pageInfo.page, pageInfo.size]);
 
   useEffect(() => {
     if (isApiMode) {
@@ -47,16 +58,22 @@ function EntityPage({ config }) {
   const records = isApiMode ? apiRecords : localCrud.records;
 
   const filteredRecords = useMemo(() => {
+    let nextRecords = records;
+
+    if (config.key === "cities" && extraFilters.popular !== "all") {
+      nextRecords = nextRecords.filter((record) => record.isPopular === extraFilters.popular);
+    }
+
     if (!query.trim()) {
-      return records;
+      return nextRecords;
     }
 
     const normalizedQuery = query.trim().toLowerCase();
 
-    return records.filter((record) =>
+    return nextRecords.filter((record) =>
       Object.values(record).some((value) => String(value).toLowerCase().includes(normalizedQuery)),
     );
-  }, [records, query]);
+  }, [records, query, extraFilters, config.key]);
 
   const summary = config.summary(records);
 
@@ -136,16 +153,30 @@ function EntityPage({ config }) {
         title={`Таблица: ${config.title}`}
         subtitle="Поиск работает по всем видимым полям. В mock-режиме данные сохраняются в localStorage, в api-режиме идут напрямую в backend."
         action={
-          <div className="input-group" style={{ maxWidth: 360 }}>
-            <span className="input-group-text bg-white border-end-0">
-              <i className="bi bi-search" />
-            </span>
-            <input
-              className="form-control border-start-0"
-              placeholder="Поиск по таблице"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
+          <div className="d-flex gap-2 flex-wrap justify-content-end">
+            {config.key === "cities" && (
+              <select
+                className="form-select"
+                style={{ maxWidth: 190 }}
+                value={extraFilters.popular}
+                onChange={(event) => setExtraFilters((current) => ({ ...current, popular: event.target.value }))}
+              >
+                <option value="all">Все города</option>
+                <option value="Yes">Только popular</option>
+                <option value="No">Не popular</option>
+              </select>
+            )}
+            <div className="input-group" style={{ maxWidth: 360 }}>
+              <span className="input-group-text bg-white border-end-0">
+                <i className="bi bi-search" />
+              </span>
+              <input
+                className="form-control border-start-0"
+                placeholder="Поиск по таблице"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
           </div>
         }
       >
@@ -161,6 +192,16 @@ function EntityPage({ config }) {
           canDelete={config.capabilities?.canDelete ?? true}
           emptyLabel="Ничего не найдено по текущему фильтру."
         />
+        {isApiMode && (
+          <PaginationControls
+            page={pageInfo.page}
+            size={pageInfo.size}
+            totalPages={pageInfo.totalPages}
+            totalElements={pageInfo.totalElements}
+            onPageChange={(page) => setPageInfo((current) => ({ ...current, page }))}
+            onSizeChange={(size) => setPageInfo((current) => ({ ...current, page: 0, size }))}
+          />
+        )}
       </SectionCard>
 
       <EntityModal

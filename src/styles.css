@@ -296,3 +296,32 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.record-modal__dialog--wide {
+  width: min(1180px, 100%);
+}
+
+.surface-subcard {
+  border: 1px solid var(--ta-border);
+  border-radius: 20px;
+  background: rgba(248, 250, 252, 0.78);
+}
+
+.btn-icon {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.poi-form-tabs .form-label {
+  font-weight: 600;
+  color: var(--ta-ink);
+}
+
+.table-wrap td,
+.table-wrap th {
+  vertical-align: middle;
+}

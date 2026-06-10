@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import EntityPage from "./EntityPage";
 import SectionCard from "../components/ui/SectionCard";
 import StatCard from "../components/ui/StatCard";
-import StatusBadge from "../components/ui/StatusBadge";
 import EntityTable from "../components/ui/EntityTable";
-import EntityModal from "../components/ui/EntityModal";
+import PaginationControls from "../components/ui/PaginationControls";
+import PoiFormModal from "../components/poi/PoiFormModal";
 import { entityConfigs } from "../data/entityConfigs";
 import { useAppSettings } from "../services/AppSettingsContext";
 import {
@@ -22,33 +22,37 @@ import {
 } from "../services/adminApi";
 import { formatDateTime } from "../services/apiClient";
 
-function stringifyJson(value, fallback = "") {
+function parseJsonSafe(value, fallback) {
   if (value === undefined || value === null || value === "") {
     return fallback;
   }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
   try {
-    return JSON.stringify(value, null, 2);
+    return JSON.parse(value);
   } catch {
     return fallback;
   }
 }
 
-function parseJson(value, fallback) {
-  if (!value || !String(value).trim()) {
-    return fallback;
+function extractTags(item) {
+  const tags = parseJsonSafe(item.tags, item.tags);
+  if (Array.isArray(tags)) {
+    return tags;
   }
-  return JSON.parse(value);
-}
-
-function parseLines(value) {
-  return String(value || "")
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return [];
 }
 
 function mapPoiToRecord(item) {
   const media = Array.isArray(item.media) ? item.media : [];
+  const tags = extractTags(item);
+  const features = item.features || {};
+  const hours = Array.isArray(item.hours) ? item.hours : [];
+  const sources = Array.isArray(item.sources) ? item.sources : [];
+
   return {
     id: item.id,
     name: item.name || "",
@@ -56,6 +60,7 @@ function mapPoiToRecord(item) {
     cityId: String(item.cityId ?? ""),
     poiTypeId: String(item.poiType?.id || ""),
     type: item.poiType?.name || item.poiType?.code || "—",
+    typeCode: item.poiType?.code || "",
     verified: item.isVerified ? "Yes" : "No",
     closed: item.isClosed ? "Yes" : "No",
     isVerified: String(Boolean(item.isVerified)),
@@ -71,52 +76,69 @@ function mapPoiToRecord(item) {
     status: item.currentStatus || "—",
     media,
     mediaCount: media.length,
-    tagsText: Array.isArray(item.tags) ? item.tags.join("\n") : stringifyJson(item.tags),
-    featuresJson: stringifyJson(item.features || {}, "{}"),
-    hoursJson: stringifyJson(item.hours || [], "[]"),
-    sourcesJson: stringifyJson(item.sources || [], "[]"),
-    mediaUrlsText: media.map((mediaItem) => mediaItem.url).filter(Boolean).join("\n"),
+    tags,
+    tagsText: tags.join("\n"),
+    features,
+    featuresObject: features,
+    hours,
+    sources,
+    sourceLabel: sources[0]?.sourceCode || "—",
+    mediaUrlsText: media
+      .filter((mediaItem) => mediaItem.url && /^https?:\/\//i.test(mediaItem.url))
+      .map((mediaItem) => mediaItem.url)
+      .join("\n"),
+  };
+}
+
+function basePayload(payload) {
+  return {
+    name: payload.name,
+    slug: payload.slug,
+    poiTypeId: Number(payload.poiTypeId),
+    latitude: Number(payload.latitude),
+    longitude: Number(payload.longitude),
+    address: payload.address || null,
+    description: payload.description || null,
+    phone: payload.phone || null,
+    siteUrl: payload.siteUrl || null,
+    priceLevel: payload.priceLevel === "" ? null : Number(payload.priceLevel),
+    tags: payload.tags || [],
+    features: payload.features || {},
+    hours: payload.hours || [],
   };
 }
 
 function buildCreatePayload(payload) {
   return {
-    name: payload.name,
-    slug: payload.slug,
+    ...basePayload(payload),
     cityId: Number(payload.cityId),
-    poiTypeId: Number(payload.poiTypeId),
-    latitude: Number(payload.latitude),
-    longitude: Number(payload.longitude),
-    address: payload.address || null,
-    description: payload.description || null,
-    phone: payload.phone || null,
-    siteUrl: payload.siteUrl || null,
-    priceLevel: payload.priceLevel === "" ? null : Number(payload.priceLevel),
-    tags: parseLines(payload.tagsText),
-    features: parseJson(payload.featuresJson, {}),
-    hours: parseJson(payload.hoursJson, []),
-    media: parseLines(payload.mediaUrlsText).map((url) => ({ url, mediaType: "IMAGE" })),
-    sources: parseJson(payload.sourcesJson, []),
+    media: (payload.mediaUrls || []).map((url) => ({ url, mediaType: "IMAGE" })),
+    sources: payload.sources || [],
   };
 }
 
 function buildUpdatePayload(payload) {
   return {
-    name: payload.name,
-    slug: payload.slug,
-    poiTypeId: Number(payload.poiTypeId),
-    latitude: Number(payload.latitude),
-    longitude: Number(payload.longitude),
-    address: payload.address || null,
-    description: payload.description || null,
-    phone: payload.phone || null,
-    siteUrl: payload.siteUrl || null,
-    priceLevel: payload.priceLevel === "" ? null : Number(payload.priceLevel),
+    ...basePayload(payload),
     isVerified: payload.isVerified === "true",
     isClosed: payload.isClosed === "true",
-    tags: parseLines(payload.tagsText),
-    features: parseJson(payload.featuresJson, {}),
-    hours: parseJson(payload.hoursJson, []),
+  };
+}
+
+function buildPoiSearchPayload(filters, pagination) {
+  const selectedTypeIds = filters.poiTypeId ? [Number(filters.poiTypeId)] : undefined;
+  return {
+    cityId: Number(filters.cityId),
+    searchQuery: filters.searchQuery || null,
+    poiTypeIds: selectedTypeIds,
+    minPrice: filters.minPrice === "" ? null : Number(filters.minPrice),
+    maxPrice: filters.maxPrice === "" ? null : Number(filters.maxPrice),
+    verifiedOnly: filters.verifiedOnly === "all" ? false : filters.verifiedOnly === "true",
+    excludeClosed: filters.closedFilter === "open",
+    page: pagination.page + 1,
+    size: pagination.size,
+    sortBy: filters.sortBy,
+    sortDirection: filters.sortDirection,
   };
 }
 
@@ -126,50 +148,33 @@ function PlacesPage() {
   const [cities, setCities] = useState([]);
   const [poiTypes, setPoiTypes] = useState([]);
   const [records, setRecords] = useState([]);
-  const [filters, setFilters] = useState({ cityId: "", searchQuery: "", verifiedOnly: "all" });
+  const [filters, setFilters] = useState({
+    cityId: "",
+    searchQuery: "",
+    poiTypeId: "",
+    verifiedOnly: "all",
+    closedFilter: "all",
+    minPrice: "",
+    maxPrice: "",
+    sortBy: "name",
+    sortDirection: "ASC",
+  });
+  const [pagination, setPagination] = useState({ page: 0, size: 20, totalPages: 1, totalElements: 0 });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
-  const [selectedRecordId, setSelectedRecordId] = useState(null);
-  const [adminFiles, setAdminFiles] = useState([]);
   const [reloadToken, setReloadToken] = useState(0);
-
-  const selectedRecord = records.find((record) => Number(record.id) === Number(selectedRecordId)) || records[0] || null;
-
-  const formFields = useMemo(
-    () => [
-      { key: "name", label: "Название", type: "text", required: true },
-      { key: "slug", label: "Slug", type: "text", required: true },
-      { key: "cityId", label: "Город", type: "select", options: cities.map((city) => ({ value: String(city.id), label: city.name })), required: true },
-      { key: "poiTypeId", label: "POI type", type: "select", options: poiTypes.map((type) => ({ value: String(type.id), label: `${type.name} (${type.code})` })), required: true },
-      { key: "latitude", label: "Latitude", type: "number", required: true },
-      { key: "longitude", label: "Longitude", type: "number", required: true },
-      { key: "address", label: "Адрес", type: "text" },
-      { key: "description", label: "Описание", type: "textarea", rows: 4 },
-      { key: "phone", label: "Телефон", type: "text" },
-      { key: "siteUrl", label: "Сайт", type: "text" },
-      { key: "priceLevel", label: "Price level", type: "number" },
-      { key: "isVerified", label: "Verified", type: "select", options: ["true", "false"] },
-      { key: "isClosed", label: "Closed", type: "select", options: ["false", "true"] },
-      { key: "tagsText", label: "Теги", type: "textarea", rows: 3 },
-      { key: "featuresJson", label: "Features JSON", type: "textarea", rows: 4 },
-      { key: "hoursJson", label: "Hours JSON", type: "textarea", rows: 4 },
-      { key: "mediaUrlsText", label: "Внешние media URL", type: "textarea", rows: 3 },
-      { key: "sourcesJson", label: "Sources JSON", type: "textarea", rows: 4 },
-    ],
-    [cities, poiTypes],
-  );
 
   const statCards = useMemo(
     () => [
-      { label: "Текущий список", value: records.length, tone: "info", icon: "bi-signpost-2-fill" },
-      { label: "Verified", value: records.filter((record) => record.verified === "Yes").length, tone: "success", icon: "bi-patch-check-fill" },
+      { label: "Всего по фильтру", value: pagination.totalElements, tone: "info", icon: "bi-signpost-2-fill" },
+      { label: "На странице", value: records.length, tone: "success", icon: "bi-table" },
       { label: "Needs review", value: records.filter((record) => record.verified === "No").length, tone: "warning", icon: "bi-shield-exclamation" },
     ],
-    [records],
+    [pagination.totalElements, records],
   );
 
   useEffect(() => {
@@ -202,19 +207,14 @@ function PlacesPage() {
       setLoading(true);
       setError("");
       try {
-        const page = await searchPois({
-          cityId: Number(filters.cityId),
-          searchQuery: filters.searchQuery || null,
-          verifiedOnly: filters.verifiedOnly === "all" ? false : filters.verifiedOnly === "true",
-          excludeClosed: false,
-          page: 1,
-          size: 100,
-          sortBy: "name",
-          sortDirection: "ASC",
-        });
+        const page = await searchPois(buildPoiSearchPayload(filters, pagination));
         const mapped = page.items.map(mapPoiToRecord);
         setRecords(mapped);
-        setSelectedRecordId((current) => current || mapped[0]?.id || null);
+        setPagination((current) => ({
+          ...current,
+          totalPages: page.totalPages,
+          totalElements: page.totalElements,
+        }));
       } catch (requestError) {
         setError(requestError.message || "Не удалось загрузить POI.");
       } finally {
@@ -223,14 +223,20 @@ function PlacesPage() {
     };
 
     loadPlaces();
-  }, [filters.cityId, filters.searchQuery, filters.verifiedOnly, isApiMode, reloadToken]);
+  }, [filters, isApiMode, pagination.page, pagination.size, reloadToken]);
 
   if (!isApiMode) {
     return <EntityPage config={entityConfigs.places} />;
   }
 
+  const resetToFirstPage = (patch) => {
+    setFilters((current) => ({ ...current, ...patch }));
+    setPagination((current) => ({ ...current, page: 0 }));
+  };
+
   const handleEdit = async (record) => {
     setError("");
+    setNotice("");
     try {
       const fullPoi = await getPoi(record.id);
       setEditingRecord(mapPoiToRecord(fullPoi));
@@ -240,17 +246,25 @@ function PlacesPage() {
     }
   };
 
-  const handleSave = async (payload) => {
+  const handleSave = async (payload, adminFiles = []) => {
     setSaving(true);
     setError("");
+    setNotice("");
     try {
+      let savedPoi;
       if (payload.id) {
-        await updatePoi(payload.id, buildUpdatePayload(payload));
+        savedPoi = await updatePoi(payload.id, buildUpdatePayload(payload));
       } else {
-        await createPoi(buildCreatePayload(payload));
+        savedPoi = await createPoi(buildCreatePayload(payload));
       }
+
+      if (adminFiles.length > 0) {
+        await uploadAdminPoiMedia(savedPoi.id || payload.id, adminFiles);
+      }
+
       setModalOpen(false);
       setEditingRecord(null);
+      setNotice("POI сохранён." + (adminFiles.length ? " Фото администратора загружены." : ""));
       setReloadToken((current) => current + 1);
     } catch (requestError) {
       setError(requestError.message || "Не удалось сохранить POI.");
@@ -265,28 +279,27 @@ function PlacesPage() {
     try {
       if (action === "verify") await verifyPoi(record.id);
       if (action === "unverify") await unverifyPoi(record.id);
-      if (action === "delete") await deletePoi(record.id);
+      if (action === "delete") {
+        if (!window.confirm(`Удалить POI "${record.name}"?`)) return;
+        await deletePoi(record.id);
+      }
       setReloadToken((current) => current + 1);
     } catch (requestError) {
       setError(requestError.message || "Не удалось выполнить действие с POI.");
     }
   };
 
-  const handleUploadAdminMedia = async () => {
-    if (!selectedRecord || adminFiles.length === 0) return;
-    setSaving(true);
-    setError("");
-    setNotice("");
-    try {
-      await uploadAdminPoiMedia(selectedRecord.id, adminFiles);
-      setNotice(`Фото администратора загружены для POI #${selectedRecord.id}.`);
-      setAdminFiles([]);
-      setReloadToken((current) => current + 1);
-    } catch (requestError) {
-      setError(requestError.message || "Не удалось загрузить фотографии.");
-    } finally {
-      setSaving(false);
-    }
+  const clearFilters = () => {
+    resetToFirstPage({
+      searchQuery: "",
+      poiTypeId: "",
+      verifiedOnly: "all",
+      closedFilter: "all",
+      minPrice: "",
+      maxPrice: "",
+      sortBy: "name",
+      sortDirection: "ASC",
+    });
   };
 
   return (
@@ -299,30 +312,72 @@ function PlacesPage() {
 
       <SectionCard
         title="POI catalog"
-        subtitle="Список, создание и редактирование POI через poi-service. Фото администратора загружаются отдельным multipart endpoint."
+        subtitle="Список, фильтрация, создание и редактирование POI. Features, Hours, Media и Sources вынесены в удобные поля без ручного JSON."
         action={<button type="button" className="btn btn-primary" onClick={() => { setEditingRecord(null); setModalOpen(true); }}>Добавить POI</button>}
       >
         {error && <div className="alert alert-danger mb-3">{error}</div>}
         {notice && <div className="alert alert-success mb-3">{notice}</div>}
 
-        <div className="row g-3 mb-4">
-          <div className="col-md-4">
-            <label className="form-label">Город</label>
-            <select className="form-select" value={filters.cityId} onChange={(event) => setFilters((current) => ({ ...current, cityId: event.target.value }))}>
-              {cities.map((city) => <option key={city.id} value={city.id}>{city.name}</option>)}
-            </select>
-          </div>
-          <div className="col-md-4">
-            <label className="form-label">Search</label>
-            <input className="form-control" value={filters.searchQuery} onChange={(event) => setFilters((current) => ({ ...current, searchQuery: event.target.value }))} />
-          </div>
-          <div className="col-md-4">
-            <label className="form-label">Verified filter</label>
-            <select className="form-select" value={filters.verifiedOnly} onChange={(event) => setFilters((current) => ({ ...current, verifiedOnly: event.target.value }))}>
-              <option value="all">Все</option>
-              <option value="true">Только verified</option>
-              <option value="false">Только unverified</option>
-            </select>
+        <div className="surface-subcard p-3 mb-4">
+          <div className="row g-3">
+            <div className="col-md-4">
+              <label className="form-label">Город</label>
+              <select className="form-select" value={filters.cityId} onChange={(event) => resetToFirstPage({ cityId: event.target.value })}>
+                {cities.map((city) => <option key={city.id} value={city.id}>{city.name}</option>)}
+              </select>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">Поиск</label>
+              <input className="form-control" placeholder="Название, адрес, описание" value={filters.searchQuery} onChange={(event) => resetToFirstPage({ searchQuery: event.target.value })} />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">Тип POI</label>
+              <select className="form-select" value={filters.poiTypeId} onChange={(event) => resetToFirstPage({ poiTypeId: event.target.value })}>
+                <option value="">Все типы</option>
+                {poiTypes.map((type) => <option key={type.id} value={type.id}>{type.name} ({type.code})</option>)}
+              </select>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label">Верификация</label>
+              <select className="form-select" value={filters.verifiedOnly} onChange={(event) => resetToFirstPage({ verifiedOnly: event.target.value })}>
+                <option value="all">Все</option>
+                <option value="true">Только verified</option>
+                <option value="false">Только unverified</option>
+              </select>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label">Закрытые объекты</label>
+              <select className="form-select" value={filters.closedFilter} onChange={(event) => resetToFirstPage({ closedFilter: event.target.value })}>
+                <option value="all">Показывать все</option>
+                <option value="open">Скрыть закрытые</option>
+              </select>
+            </div>
+            <div className="col-md-2">
+              <label className="form-label">Цена от</label>
+              <input className="form-control" type="number" min="0" max="4" value={filters.minPrice} onChange={(event) => resetToFirstPage({ minPrice: event.target.value })} />
+            </div>
+            <div className="col-md-2">
+              <label className="form-label">Цена до</label>
+              <input className="form-control" type="number" min="0" max="4" value={filters.maxPrice} onChange={(event) => resetToFirstPage({ maxPrice: event.target.value })} />
+            </div>
+            <div className="col-md-2 d-flex align-items-end">
+              <button type="button" className="btn btn-outline-secondary w-100" onClick={clearFilters}>Сбросить</button>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">Сортировка</label>
+              <select className="form-select" value={filters.sortBy} onChange={(event) => resetToFirstPage({ sortBy: event.target.value })}>
+                <option value="name">По названию</option>
+                <option value="priceLevel">По цене</option>
+                <option value="updatedAt">По обновлению</option>
+              </select>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label">Направление</label>
+              <select className="form-select" value={filters.sortDirection} onChange={(event) => resetToFirstPage({ sortDirection: event.target.value })}>
+                <option value="ASC">По возрастанию</option>
+                <option value="DESC">По убыванию</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -335,6 +390,7 @@ function PlacesPage() {
             { key: "verified", label: "Verified", badge: true },
             { key: "closed", label: "Closed", badge: true },
             { key: "mediaCount", label: "Фото" },
+            { key: "sourceLabel", label: "Источник" },
             { key: "updatedAt", label: "Обновлено" },
           ]}
           records={records}
@@ -342,65 +398,48 @@ function PlacesPage() {
           onDelete={() => {}}
           renderActions={(record) => (
             <div className="d-inline-flex gap-2 flex-wrap justify-content-end">
-              <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedRecordId(record.id)}>Media</button>
-              <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => handleEdit(record)}>Edit</button>
+              <button type="button" className="btn btn-sm btn-outline-primary btn-icon" onClick={() => handleEdit(record)} title="Редактировать">
+                <i className="bi bi-pencil-square" />
+              </button>
               {record.verified === "Yes" ? (
-                <button type="button" className="btn btn-sm btn-outline-warning" onClick={() => runPoiAction("unverify", record)}>Unverify</button>
+                <button type="button" className="btn btn-sm btn-outline-warning btn-icon" onClick={() => runPoiAction("unverify", record)} title="Снять верификацию">
+                  <i className="bi bi-patch-minus" />
+                </button>
               ) : (
-                <button type="button" className="btn btn-sm btn-outline-success" onClick={() => runPoiAction("verify", record)}>Verify</button>
+                <button type="button" className="btn btn-sm btn-outline-success btn-icon" onClick={() => runPoiAction("verify", record)} title="Верифицировать">
+                  <i className="bi bi-patch-check" />
+                </button>
               )}
-              <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => runPoiAction("delete", record)}>Delete</button>
+              <button type="button" className="btn btn-sm btn-outline-danger btn-icon" onClick={() => runPoiAction("delete", record)} title="Удалить">
+                <i className="bi bi-trash3" />
+              </button>
             </div>
           )}
           emptyLabel="Список POI пуст для выбранного города и фильтра."
         />
+
+        <PaginationControls
+          page={pagination.page}
+          size={pagination.size}
+          totalPages={pagination.totalPages}
+          totalElements={pagination.totalElements}
+          onPageChange={(page) => setPagination((current) => ({ ...current, page }))}
+          onSizeChange={(size) => setPagination((current) => ({ ...current, page: 0, size }))}
+        />
       </SectionCard>
 
-      <SectionCard title="Фотографии выбранного POI" subtitle="Админские фотографии сразу получают статус APPROVED и отображаются первыми в карточке объекта.">
-        {selectedRecord ? (
-          <div className="row g-4">
-            <div className="col-12 col-xl-5">
-              <div className="fw-semibold mb-2">{selectedRecord.name}</div>
-              <div className="text-secondary small mb-3">POI #{selectedRecord.id} • {selectedRecord.address || "адрес не указан"}</div>
-              <input className="form-control mb-3" type="file" multiple accept="image/png,image/jpeg,image/webp" onChange={(event) => setAdminFiles(Array.from(event.target.files || []))} />
-              <button type="button" className="btn btn-outline-primary" disabled={!adminFiles.length || saving} onClick={handleUploadAdminMedia}>
-                Загрузить фото администратора
-              </button>
-            </div>
-            <div className="col-12 col-xl-7">
-              <div className="media-grid">
-                {(selectedRecord.media || []).length > 0 ? selectedRecord.media.map((media) => (
-                  <a key={media.id || media.url} href={getPoiMediaUrl(media.url)} target="_blank" rel="noreferrer" className="media-thumb">
-                    <img src={getPoiMediaUrl(media.url)} alt={media.originalFilename || media.mediaType || "POI media"} />
-                    <span>{media.sourceType || media.mediaType || "media"}</span>
-                  </a>
-                )) : <div className="text-secondary">У объекта пока нет фотографий.</div>}
-              </div>
-            </div>
-          </div>
-        ) : <div className="text-secondary">Выбери POI из таблицы.</div>}
-      </SectionCard>
-
-      <EntityModal
+      <PoiFormModal
         isOpen={modalOpen}
         title={editingRecord ? "Изменить POI" : "Создать POI"}
-        fields={formFields}
-        initialRecord={editingRecord || {
-          cityId: filters.cityId || "",
-          poiTypeId: poiTypes[0]?.id ? String(poiTypes[0].id) : "",
-          isVerified: "false",
-          isClosed: "false",
-          tagsText: "",
-          featuresJson: "{}",
-          hoursJson: "[]",
-          mediaUrlsText: "",
-          sourcesJson: "[]",
-        }}
+        initialRecord={editingRecord}
+        initialCityId={filters.cityId || ""}
+        cities={cities}
+        poiTypes={poiTypes}
+        saving={saving}
+        getMediaUrl={getPoiMediaUrl}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSave}
       />
-
-      {saving && <div className="text-secondary">Сохранение...</div>}
     </div>
   );
 }

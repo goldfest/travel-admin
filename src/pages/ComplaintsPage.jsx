@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import SectionCard from "../components/ui/SectionCard";
 import StatCard from "../components/ui/StatCard";
 import StatusBadge from "../components/ui/StatusBadge";
+import PaginationControls from "../components/ui/PaginationControls";
 import { useLocalCrud } from "../hooks/useLocalCrud";
 import { useAppSettings } from "../services/AppSettingsContext";
 import { getReviewMediaUrl, listReports, processReport } from "../services/adminApi";
@@ -32,7 +33,8 @@ function ComplaintsPage() {
   const { records: mockRecords, refresh: refreshMock } = useLocalCrud("complaints");
   const [records, setRecords] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
-  const [filter, setFilter] = useState("all");
+  const [filters, setFilters] = useState({ status: "all", subjectType: "all", search: "" });
+  const [pageInfo, setPageInfo] = useState({ page: 0, size: 20, totalPages: 1, totalElements: 0 });
   const [moderatorComment, setModeratorComment] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -46,9 +48,18 @@ function ComplaintsPage() {
       setLoading(true);
       setError("");
       try {
-        const page = await listReports({ page: 0, size: 100, status: filter === "all" ? undefined : filter });
+        const page = await listReports({
+          page: pageInfo.page,
+          size: pageInfo.size,
+          status: filters.status === "all" ? undefined : filters.status,
+        });
         const mapped = page.items.map(mapReport);
         setRecords(mapped);
+        setPageInfo((current) => ({
+          ...current,
+          totalPages: page.totalPages,
+          totalElements: page.totalElements,
+        }));
         setSelectedId((current) => current || mapped[0]?.id || null);
       } catch (requestError) {
         setError(requestError.message || "Не удалось загрузить жалобы.");
@@ -58,16 +69,37 @@ function ComplaintsPage() {
     };
 
     loadReports();
-  }, [filter, isApiMode]);
+  }, [filters.status, isApiMode, pageInfo.page, pageInfo.size]);
 
   const activeRecords = isApiMode ? records : mockRecords;
-  const selectedComplaint = activeRecords.find((record) => Number(record.id) === Number(selectedId)) || activeRecords[0] || null;
+
+  const visibleRecords = useMemo(() => {
+    let nextRecords = activeRecords;
+    if (filters.subjectType !== "all") {
+      nextRecords = nextRecords.filter((record) => record.subjectType === filters.subjectType);
+    }
+    if (filters.search.trim()) {
+      const normalized = filters.search.trim().toLowerCase();
+      nextRecords = nextRecords.filter((record) =>
+        [record.subjectName, record.reason, record.reporter, record.comment, record.status]
+          .some((value) => String(value || "").toLowerCase().includes(normalized)),
+      );
+    }
+    return nextRecords;
+  }, [activeRecords, filters.subjectType, filters.search]);
+
+  const selectedComplaint = visibleRecords.find((record) => Number(record.id) === Number(selectedId)) || visibleRecords[0] || null;
 
   const statCards = useMemo(() => [
-    { label: "Всего жалоб", value: activeRecords.length, tone: "info", icon: "bi-flag-fill" },
-    { label: "Pending", value: activeRecords.filter((record) => String(record.status).toLowerCase() === "pending").length, tone: "warning", icon: "bi-hourglass-split" },
-    { label: "Approved/Resolved", value: activeRecords.filter((record) => ["approved", "resolved"].includes(String(record.status).toLowerCase())).length, tone: "success", icon: "bi-check-circle-fill" },
-  ], [activeRecords]);
+    { label: "Всего по статусу", value: isApiMode ? pageInfo.totalElements : activeRecords.length, tone: "info", icon: "bi-flag-fill" },
+    { label: "На странице", value: activeRecords.length, tone: "warning", icon: "bi-list-ul" },
+    { label: "С фото", value: activeRecords.filter((record) => (record.media?.length || 0) > 0).length, tone: "success", icon: "bi-images" },
+  ], [activeRecords, isApiMode, pageInfo.totalElements]);
+
+  const resetToFirstPage = (patch) => {
+    setFilters((current) => ({ ...current, ...patch }));
+    setPageInfo((current) => ({ ...current, page: 0 }));
+  };
 
   const handleMockStatusChange = (status) => {
     if (!selectedComplaint) return;
@@ -106,19 +138,36 @@ function ComplaintsPage() {
             title="Лента жалоб"
             subtitle={isApiMode ? "Live endpoint: GET /v1/reports и GET /v1/reports/status/{status}." : "Mock moderation queue для локальной проработки сценариев."}
             action={
-              <select className="form-select" style={{ maxWidth: 220 }} value={filter} onChange={(event) => setFilter(event.target.value)}>
-                <option value="all">Все</option>
-                <option value="pending">pending</option>
-                <option value="approved">approved</option>
-                <option value="rejected">rejected</option>
-              </select>
+              <div className="d-flex gap-2 flex-wrap justify-content-end">
+                <select className="form-select" style={{ maxWidth: 170 }} value={filters.status} onChange={(event) => resetToFirstPage({ status: event.target.value })}>
+                  <option value="all">Все статусы</option>
+                  <option value="pending">pending</option>
+                  <option value="approved">approved</option>
+                  <option value="rejected">rejected</option>
+                </select>
+                <select className="form-select" style={{ maxWidth: 160 }} value={filters.subjectType} onChange={(event) => resetToFirstPage({ subjectType: event.target.value })}>
+                  <option value="all">Все типы</option>
+                  <option value="POI">POI</option>
+                  <option value="Review">Review</option>
+                </select>
+              </div>
             }
           >
             {loading && <div className="text-secondary mb-3">Загрузка...</div>}
             {error && <div className="alert alert-danger mb-3">{error}</div>}
 
+            <div className="input-group mb-3">
+              <span className="input-group-text bg-white border-end-0"><i className="bi bi-search" /></span>
+              <input
+                className="form-control border-start-0"
+                placeholder="Поиск по жалобам на текущей странице"
+                value={filters.search}
+                onChange={(event) => resetToFirstPage({ search: event.target.value })}
+              />
+            </div>
+
             <div className="d-flex flex-column gap-3">
-              {activeRecords.map((complaint) => (
+              {visibleRecords.map((complaint) => (
                 <button
                   type="button"
                   key={complaint.id}
@@ -129,13 +178,25 @@ function ComplaintsPage() {
                     <div>
                       <div className="fw-semibold">{complaint.subjectName}</div>
                       <div className="text-secondary small">{complaint.subjectType} • {complaint.reason} • {complaint.reporter}</div>
-                      <div className="text-secondary small mt-1">Фото: {complaint.media?.length || 0}</div>
+                      <div className="text-secondary small mt-1">Фото: {complaint.media?.length || 0} • {complaint.createdAt}</div>
                     </div>
                     <StatusBadge value={complaint.status} />
                   </div>
                 </button>
               ))}
+              {visibleRecords.length === 0 && <div className="text-secondary">Жалобы не найдены.</div>}
             </div>
+
+            {isApiMode && (
+              <PaginationControls
+                page={pageInfo.page}
+                size={pageInfo.size}
+                totalPages={pageInfo.totalPages}
+                totalElements={pageInfo.totalElements}
+                onPageChange={(page) => setPageInfo((current) => ({ ...current, page }))}
+                onSizeChange={(size) => setPageInfo((current) => ({ ...current, page: 0, size }))}
+              />
+            )}
           </SectionCard>
         </div>
 

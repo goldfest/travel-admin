@@ -53,9 +53,12 @@ function mapPoiTypeToRecord(item) {
 }
 
 export const cityEntityAdapter = {
-  async fetchList() {
-    const page = await listCities();
-    return page.items.map(mapCityToRecord);
+  async fetchList(params = {}) {
+    const page = await listCities(params);
+    return {
+      ...page,
+      items: page.items.map(mapCityToRecord),
+    };
   },
   async save(record) {
     const payload = mapCityToPayload(record);
@@ -68,9 +71,12 @@ export const cityEntityAdapter = {
 };
 
 export const poiTypeEntityAdapter = {
-  async fetchList() {
-    const page = await listPoiTypes();
-    return page.items.map(mapPoiTypeToRecord);
+  async fetchList(params = {}) {
+    const page = await listPoiTypes(params);
+    return {
+      ...page,
+      items: page.items.map(mapPoiTypeToRecord),
+    };
   },
   async save(record) {
     const payload = {
